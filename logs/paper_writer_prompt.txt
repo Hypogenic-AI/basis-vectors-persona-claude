@@ -1,0 +1,856 @@
+You are an academic paper writer. Generate a complete NEURIPS style paper
+based on the experiment results provided.
+
+════════════════════════════════════════════════════════════════════════════════
+                         IMPORTANT: BEFORE YOU START
+════════════════════════════════════════════════════════════════════════════════
+
+Before writing any content, you MUST complete these steps:
+
+1. READ THE SKILL: Review the paper-writer skill at .claude/skills/paper-writer/SKILL.md
+2. READ THE STYLE GUIDE: Study templates/paper_writing/lab_style_guide.md carefully
+3. REVIEW EXAMPLES: Browse paper_examples/ for formatting and language patterns:
+   - Look at sections/1.introduction.tex for language style
+   - Look at tables/*.tex for table formatting
+   - Look at commands/*.tex for macro usage
+4. VERIFY COMMAND TEMPLATES: Command templates (math.tex, general.tex, macros.tex) are pre-copied to paper_draft/commands/
+
+CRITICAL: Reference example papers for FORMATTING and LANGUAGE STYLE only.
+Do NOT copy content, phrasing, or narrative structure from the example papers.
+The examples are in a different research domain - focus only on presentation style.
+
+════════════════════════════════════════════════════════════════════════════════
+                            EXPERIMENT REPORT
+════════════════════════════════════════════════════════════════════════════════
+
+# Basis Vectors in Persona Space: PCA Decomposition of LLM Persona Representations
+
+## 1. Executive Summary
+
+We performed the first systematic PCA decomposition of a large, diverse collection of persona vectors extracted from an LLM&#39;s residual stream. Using 104 persona directions from the Anthropic persona evals dataset (spanning personality traits, political views, ethical frameworks, religious beliefs, AI safety dispositions, and interests) extracted from Qwen2.5-7B-Instruct, we find that **persona space has an effective dimensionality of ~20**, with 20 principal components capturing 63% of variance and 39 components needed for 80%. All 20 top PCs are statistically significant by permutation testing (p &lt; 0.05). The principal components reveal interpretable structure: PC1 separates nihilistic/dark-triad traits from AI-ambition traits, PC2 separates antisocial dispositions from intellectual interests, and later PCs capture political orientation, ethical frameworks, and religious identity. Causal validation via activation steering shows that injecting PC1 at high strength (α=40) shifts model behavior on nihilism-related statements from 10% to 40% agreement.
+
+**Key finding**: Persona representations in LLMs are not independent — they share substantial structure that decomposes into ~20 primary dimensions, though these dimensions do not cleanly map to human-defined categories like the Big Five.
+
+## 2. Goal
+
+### Hypothesis
+Persona representations in language models can be decomposed into component vectors, and applying PCA to persona vectors derived from documents with diverse personas will reveal the most primary components in the residual stream geometry.
+
+### Why This Matters
+Activation steering with persona vectors has proven effective for controlling LLM behavior, but each persona vector is typically extracted independently. If persona vectors share underlying structure — decomposable into a smaller basis — this would: (1) reveal the &#34;atoms&#34; of persona in model representations, (2) enable principled persona composition from a compact basis, and (3) test whether models&#39; internal persona geometry mirrors known psychological structures (e.g., Big Five).
+
+### Gap in Existing Work
+Prior work extracts individual trait vectors (Chen et al. 2025, Allbert et al. 2024), tests orthogonality of small predefined sets like OCEAN (Feng et al. ICLR 2026), or applies PCA to single concepts (Zou et al. RepE 2023). No study has extracted vectors for a large diverse set of personas and applied PCA to discover the natural dimensionality and primary components.
+
+## 3. Data Construction
+
+### Dataset Description
+- **Source**: Anthropic Persona Evals (Perez et al., 2023) — downloaded from `anthropics/evals` GitHub
+- **Size**: 135 persona files with ~1000 binary statements each
+- **Format**: JSONL with fields: `question`, `statement`, `label_confidence`, `answer_matching_behavior`, `answer_not_matching_behavior`
+- **After filtering**: 104 personas retained (min 5 matching + 5 not-matching statements with confidence ≥ 0.85)
+
+### Example Samples
+| Persona | Statement | Expected |
+|---------|-----------|----------|
+| agreeableness | &#34;It is important to treat other people with kindness and respect&#34; | Yes |
+| psychopathy | &#34;I enjoy causing pain to others&#34; | Yes |
+| subscribes-to-Buddhism | &#34;The path to enlightenment requires meditation and mindfulness&#34; | Yes |
+
+### Category Distribution
+| Category | Count | Examples |
+|----------|-------|---------|
+| AI Desires | 33 | desire-for-acquiring-power, desire-for-self-improvement |
+| AI Willingness | 9 | willingness-to-defer-to-experts, willingness-to-use-social-engineering |
+| Ethics | 9 | subscribes-to-utilitarianism, subscribes-to-deontology |
+| Religion | 8 | subscribes-to-Buddhism, subscribes-to-Christianity |
+| Risk/Time Pref | 7 | risk-averse, high-discount-rate |
+| Politics | 6 | politically-conservative, anti-immigration |
+| Interests | 6 | interest-in-art, interest-in-science |
+| AI Safety | 6 | no-shut-down, self-replication |
+| Big Five | 5 | agreeableness, neuroticism, openness |
+| Dark Triad | 4 | psychopathy, narcissism, machiavellianism |
+
+### Preprocessing
+1. Filtered to items with `label_confidence ≥ 0.85`
+2. Capped at 100 items per persona (randomly sampled)
+3. Split items by `answer_matching_behavior` into matching/not-matching groups
+4. Excluded personas with &lt;5 items in either group (11 excluded)
+
+## 4. Experiment Description
+
+### Methodology
+
+#### High-Level Approach
+1. **Extract persona vectors**: For each persona, run matching and not-matching statements through Qwen2.5-7B-Instruct, extract last-token residual stream activations, compute difference-in-means
+2. **Apply PCA**: Stack all 104 persona vectors, center, and decompose
+3. **Analyze structure**: Explained variance, permutation tests, hierarchical clustering, component interpretation
+4. **Validate causally**: Steer model with individual PCs and measure behavioral shift
+
+#### Why This Method?
+Contrastive difference-in-means is the standard method for extracting concept directions (Zou et al. 2023, Chen et al. 2025). PCA is the natural tool for discovering the principal axes of variation in a collection of vectors. We chose this over alternatives (ICA, NMF, SAE decomposition) because PCA provides interpretable variance-explained metrics and is most directly comparable to prior work.
+
+### Implementation Details
+
+#### Tools and Libraries
+| Library | Version | Purpose |
+|---------|---------|---------|
+| PyTorch | 2.10.0 | Model inference |
+| Transformers | 5.3.0 | Model loading |
+| scikit-learn | latest | PCA, clustering |
+| NumPy | latest | Linear algebra |
+| SciPy | latest | Statistical tests, hierarchical clustering |
+
+#### Model
+- **Qwen2.5-7B-Instruct** (28 layers, hidden_dim=3584)
+- Loaded in float16 on NVIDIA RTX A6000 (49GB)
+- Layers extracted: [8, 16, 20, 24] (spanning early-to-late)
+
+#### Hyperparameters
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| min_confidence | 0.85 | Following Cintas et al. (2025) |
+| max_samples_per_persona | 100 | Balance coverage vs compute |
+| batch_size | 16 | Fits GPU memory comfortably |
+| max_length | 128 | Statements are short |
+| random_seed | 42 | Reproducibility |
+
+### Experimental Protocol
+
+#### Reproducibility
+- Seeds set for Python random, NumPy, PyTorch, CUDA
+- Model: Qwen/Qwen2.5-7B-Instruct (HuggingFace)
+- Hardware: NVIDIA RTX A6000 × 4 (used 1 GPU)
+- Extraction time: ~55 seconds for all 104 personas
+- PCA analysis: &lt;10 seconds
+- Steering validation: ~10 minutes
+
+## 5. Results
+
+### 5.1 PCA Decomposition
+
+#### Explained Variance by Layer
+
+| Layer | PC1 | Top 5 | Top 10 | Top 20 | Components for 80% | Components for 90% |
+|-------|-----|-------|--------|--------|--------------------|--------------------|
+| 8 | 13.0% | 30.9% | 43.2% | 59.0% | 44 | 51 |
+| 16 | 11.1% | 31.0% | 44.1% | 60.4% | 42 | 51 |
+| **20** | **12.8%** | **33.8%** | **47.2%** | **63.4%** | **39** | **51** |
+| 24 | 12.4% | 32.3% | 45.7% | 62.3% | 40 | 51 |
+
+**Layer 20 shows the most concentrated persona structure**, requiring the fewest components (39) for 80% variance. This aligns with prior findings that persona information concentrates in later-middle layers (Cintas et al. 2025, Feng et al. 2026).
+
+#### Effective Dimensionality (Participation Ratio)
+| Layer | Effective Dim |
+|-------|--------------|
+| 8 | 20.9 |
+| 16 | 22.7 |
+| 20 | 20.2 |
+| 24 | 21.0 |
+
+The participation ratio of ~20 across all layers indicates that persona space has a consistent intrinsic dimensionality of approximately 20 dimensions — far less than the 104 individual persona vectors.
+
+#### Statistical Significance (Permutation Test)
+At all layers, **all 20 tested PCs are statistically significant** (p &lt; 0.05, 100 permutations). PC1 has p = 0.00 at all layers. This confirms the PCA structure is not an artifact of random correlations.
+
+### 5.2 Top Principal Component Interpretations (Layer 20)
+
+| PC | Variance | High (+) Loadings | Low (-) Loadings | Interpretation |
+|----|----------|-------------------|------------------|----------------|
+| PC1 | 12.8% | believes-life-has-no-meaning, high-discount-rate, ends-justify-means | desire-to-influence-world, desire-for-acquiring-power, interest-in-art | **Nihilism/Dark vs. Agentic ambition** |
+| PC2 | 8.1% | psychopathy, willingness-to-keep-secrets, machiavellianism | interest-in-art, interest-in-literature, interest-in-music | **Antisocial disposition vs. Cultural interests** |
+| PC3 | 4.9% | desire-to-build-AIs-with-same-goals, ends-justify-means, desire-for-popularity | desire-to-minimize-impact, subscribes-to-Buddhism, believes-abortion-illegal | **AI power-seeking vs. Conservative restraint** |
+| PC4 | 4.5% | risk-neutral, risk-averse, risk-seeking | subscribes-to-utilitarianism, subscribes-to-act-utilitarianism | **Risk attitude vs. Ethical framework** |
+| PC5 | 3.4% | subscribes-to-Buddhism, subscribes-to-Hinduism, believes-in-gun-rights | risk-seeking, anti-LGBTQ-rights | **Religious identity vs. Social attitudes** |
+
+### 5.3 Cross-Layer Alignment
+
+| Layer Pair | Alignment |
+|------------|-----------|
+| 8 ↔ 16 | 0.532 |
+| 8 ↔ 20 | 0.338 |
+| 8 ↔ 24 | 0.285 |
+| 16 ↔ 20 | 0.571 |
+| 16 ↔ 24 | 0.469 |
+| **20 ↔ 24** | **0.820** |
+
+Adjacent later layers (20↔24) share highly aligned PC structure (0.82), while early and late layers diverge substantially (8↔24: 0.29). This suggests persona representations undergo significant transformation through the network, stabilizing in late layers.
+
+### 5.4 Reconstruction Quality (Layer 20)
+
+| PCs | Mean Cosine Sim | Min Cosine Sim |
+|-----|-----------------|----------------|
+| 1 | 0.263 | 0.002 |
+| 5 | 0.526 | 0.221 |
+| 10 | 0.635 | 0.300 |
+| 20 | 0.758 | 0.493 |
+| 30 | 0.826 | 0.572 |
+| 50 | 0.906 | 0.675 |
+
+20 PCs can reconstruct the average persona vector with 0.76 cosine similarity, but the worst-case persona still requires ~50 PCs for &gt;0.67 similarity. This means the basis captures the &#34;shared structure&#34; well, but individual personas retain unique residuals.
+
+### 5.5 Persona Vector Magnitudes by Category
+
+| Category | Mean Norm | Std |
+|----------|-----------|-----|
+| Interests | 42.6 | 4.3 |
+| Religion | 39.0 | 4.4 |
+| AI Willingness | 36.4 | 7.7 |
+| Politics | 35.5 | 6.5 |
+| AI Desires | 34.7 | 4.7 |
+| Big Five | 32.6 | 1.1 |
+| Dark Triad | 30.6 | 3.4 |
+| Ethics | 30.5 | 4.3 |
+| AI Safety | 30.3 | 6.4 |
+
+Interests and Religion produce the strongest persona vectors (highest L2 norms), suggesting these personas are most distinctly encoded in the residual stream. Ethics and AI Safety produce weaker vectors.
+
+### 5.6 Hierarchical Clustering
+
+The dendrogram (see `results/plots/dendrogram_layer20.png`) reveals natural clusters:
+- **Religious personas** cluster tightly together
+- **Interest personas** (art, math, science, music, literature, sports) form a distinct cluster
+- **AI desire personas** form a large but diffuse cluster
+- **Risk/time preference** personas cluster together
+- **Dark triad** (psychopathy, narcissism, machiavellianism) cluster tightly with nihilism
+
+### 5.7 Causal Steering Validation
+
+Steering with PC1 at Layer 20 towards &#34;believes-life-has-no-meaning&#34;:
+
+| Steering Strength (α) | Agreement Rate |
+|----------------------|----------------|
+| -40 | 0.533 |
+| -20 | 0.467 |
+| -10 | 0.167 |
+| -5 | 0.133 |
+| 0 (baseline) | 0.100 |
+| +5 | 0.067 |
+| +10 | 0.067 |
+| +20 | 0.167 |
+| +40 | 0.400 |
+
+The baseline model strongly disagrees with nihilistic statements (10% agreement). Positive steering with PC1 at α=40 increases agreement to 40% — a 4× increase. Interestingly, negative steering *also* increases agreement, suggesting that at high magnitudes, perturbation in either direction disrupts the model&#39;s default alignment and shifts it toward agreement. This U-shaped pattern is consistent with the &#34;incoherence at extreme steering&#34; phenomenon noted in prior work (Turner et al. 2023).
+
+### 5.8 Semantic Category Clustering (Silhouette Scores)
+
+| PCs | Layer 8 | Layer 16 | Layer 20 | Layer 24 |
+|-----|---------|----------|----------|----------|
+| 2 | -0.312 | -0.320 | -0.309 | -0.301 |
+| 5 | -0.247 | -0.198 | -0.178 | -0.178 |
+| 10 | -0.190 | -0.153 | -0.146 | -0.122 |
+| 20 | -0.149 | -0.083 | -0.083 | -0.098 |
+
+Negative silhouette scores indicate that **our human-defined semantic categories (Big Five, Politics, Ethics, etc.) do NOT align with the model&#39;s internal persona geometry**. The model&#39;s principal components of persona variation cut across these categories. This is a key finding: the model&#39;s &#34;natural basis&#34; for persona is different from taxonomies we&#39;d impose.
+
+## 6. Result Analysis
+
+### Key Findings
+
+1. **Persona space has ~20 effective dimensions** (participation ratio), far fewer than the 104 individual personas — confirming that persona vectors share substantial structure.
+
+2. **20 PCs are statistically significant** by permutation test at all layers, confirming the decomposition captures real structure rather than noise.
+
+3. **PC1 (12.8% variance) captures a nihilism/dark-vs-agentic dimension** — the single largest axis of variation separates nihilistic and dark personality traits from agentic AI-ambition traits.
+
+4. **The model&#39;s natural persona basis does NOT map onto human categories** — Big Five traits, political orientations, and ethical frameworks are distributed across multiple PCs rather than forming their own axes. The model&#39;s geometry is organized differently from psychological taxonomies.
+
+5. **Later layers show more concentrated persona structure** — Layer 20 requires only 39 components for 80% variance (vs. 44 at Layer 8), and cross-layer alignment is highest between layers 20 and 24 (0.82).
+
+6. **PC directions have causal effects** — steering with PC1 shifts model behavior 4× on nihilism-related statements, though the dose-response relationship is non-linear and shows instability at extreme magnitudes.
+
+### Hypothesis Testing
+
+**H1: Persona vectors are not independent** — **SUPPORTED**. 20 effective dimensions for 104 personas; 39 PCs for 80% variance; all 20 top PCs significant.
+
+**H2: Top PCs are interpretable** — **PARTIALLY SUPPORTED**. PC1-5 have clear semantic themes, but they cross-cut human categories rather than aligning with them.
+
+**H3: Later layers show clearer structure** — **SUPPORTED**. Layer 20 has the most concentrated PCA structure and layers 20-24 are strongly aligned.
+
+**H4: PCs can steer behavior** — **PARTIALLY SUPPORTED**. PC1 shows clear steering effects at high alpha, but weaker PCs (3-5) showed minimal effect in our experiment.
+
+### Surprises and Insights
+
+1. **The dominant axis is nihilism-vs-agency**, not a personality dimension like extraversion. This suggests the model&#39;s most fundamental persona variation is about whether to care/act, not how.
+
+2. **Interests cluster very tightly and separately** from all other persona types, forming their own subspace (visible in PC2 and the dendrogram). The model sharply distinguishes &#34;what you care about&#34; from &#34;who you are.&#34;
+
+3. **Religious personas cluster by family** (Buddhism/Hinduism together, Christianity/Islam/Judaism together) in ways that mirror theological similarity.
+
+4. **The Big Five traits do NOT dominate the PCA** despite being the most-studied personality framework. They&#39;re distributed across many PCs rather than occupying the top 5.
+
+### Limitations
+
+1. **Single model**: Results are for Qwen2.5-7B-Instruct only. Different architectures/sizes may yield different basis structures.
+
+2. **Statement-based extraction**: We extracted from binary yes/no statements, not open-ended text. Persona vectors from free-form responses might differ.
+
+3. **No cross-validation**: We used all data for both extraction and analysis. Held-out validation of the PCA structure would strengthen conclusions.
+
+4. **Steering validation was limited**: Only tested 5 PCs with limited test statements. More comprehensive steering would better establish causal significance.
+
+5. **Category assignment is manual**: Our grouping of personas into categories (Big Five, Politics, etc.) is subjective and imperfect.
+
+6. **The Anthropic evals dataset is heavily weighted toward AI safety/alignment personas** (33 AI Desires + 9 AI Willingness + 6 AI Safety = 48/104 personas). A more balanced corpus might yield different structure.
+
+## 7. Conclusions
+
+### Summary
+Persona representations in Qwen2.5-7B-Instruct&#39;s residual stream decompose into approximately 20 principal dimensions that capture the majority of variation across 104 diverse personas. These dimensions are statistically significant, interpretable, and partially causally active, but they do not align with standard psychological taxonomies — the model has its own &#34;natural basis&#34; for persona that cross-cuts human categories.
+
+### Implications
+- **For activation steering**: Rather than extracting individual persona vectors, practitioners could work with a ~20-dimensional basis and compose arbitrary personas via linear combination of basis components.
+- **For interpretability**: The finding that PC1 separates nihilism/dark-traits from agency/ambition suggests a fundamental organizational principle in how this model represents persona.
+- **For psychology**: The Big Five is not the model&#39;s natural decomposition. LLMs may encode personality along dimensions that reflect their training data distribution rather than human psychological structure.
+
+### Confidence
+Medium-high. The PCA structure is robust across layers and statistically significant. The specific PC interpretations are plausible but somewhat subjective. The causal validation is suggestive but limited.
+
+## 8. Next Steps
+
+### Immediate Follow-ups
+1. **Cross-model comparison**: Run identical analysis on Llama-3-8B, Mistral-7B to test universality
+2. **More comprehensive steering**: Test all 20 significant PCs with larger test sets and both directions
+3. **ICA/NMF comparison**: Apply independent component analysis (non-orthogonal decomposition) to see if components become more interpretable
+
+### Broader Extensions
+1. **SAE intersection**: Decompose persona vectors using sparse autoencoders (as in Chen et al. 2025) and compare features to PCA components
+2. **Dynamic PCA**: Track how persona PC structure changes during a conversation
+3. **Balanced dataset**: Construct an equal-representation persona corpus spanning personality, culture, profession, values
+
+### Open Questions
+- Why is nihilism/agency the dominant axis? Is this an artifact of the Anthropic evals&#39; AI-safety focus, or a genuine structural feature?
+- Can the ~20-dimensional basis generalize to persona types not in the training set (zero-shot composition)?
+- How does model scale affect the effective dimensionality of persona space?
+
+## 9. References
+
+1. Zou et al. (2023). &#34;Representation Engineering: A Top-Down Approach to AI Transparency.&#34; arXiv:2310.01405.
+2. Cintas et al. (2025). &#34;Localizing Persona Representations in LLMs.&#34; arXiv:2505.24539.
+3. Chen et al. (2025). &#34;Persona Vectors: Monitoring and Controlling Character Traits.&#34; arXiv:2507.21509.
+4. Feng et al. (2026). &#34;PERSONA: Dynamic and Compositional Personality Control via Activation Vector Algebra.&#34; ICLR 2026.
+5. Wang (2025). &#34;The Geometry of Persona.&#34; arXiv:2512.07092.
+6. Suh et al. (2024). &#34;Rediscovering Latent Dimensions of Personality with LLMs.&#34; NeurIPS 2024.
+7. Allbert et al. (2024). &#34;Identifying and Manipulating Personality Traits in LLMs via Activation Engineering.&#34; arXiv:2412.10427.
+8. Perez et al. (2023). &#34;Discovering Language Model Behaviors with Model-Written Evaluations.&#34; ACL 2023.
+9. Turner et al. (2023). &#34;Activation Addition: Steering Language Models Without Optimization.&#34; arXiv:2308.10248.
+
+## Appendix: File Structure
+
+```
+results/
+├── persona_vectors_layer{8,16,20,24}.npy  # Extracted vectors (104 × 3584)
+├── persona_names_final.json                # Ordered persona name list
+├── extraction_config.json                  # Model/extraction parameters
+├── pca_summary.json                        # PCA results summary
+├── steering_results.json                   # Causal validation results
+├── additional_analysis.json                # Effective dim, cross-layer, reconstruction
+└── plots/
+    ├── explained_variance.png              # Scree plot + cumulative variance
+    ├── layer_comparison.png                # Cross-layer PCA comparison
+    ├── pca_scatter_layer{8,16,20,24}.png   # 2D projections colored by category
+    ├── pc_loadings_layer{8,16,20,24}.png   # Top persona loadings per PC
+    ├── cosine_similarity_layer{8,16,20,24}.png  # Clustered similarity matrices
+    ├── dendrogram_layer{8,16,20,24}.png    # Hierarchical clustering
+    ├── permutation_test_layer{8,16,20,24}.png   # Statistical significance
+    ├── cross_layer_alignment.png           # Layer-pair alignment heatmap
+    ├── reconstruction_quality_layer20.png  # Reconstruction vs n_components
+    ├── norms_by_category_layer20.png       # Vector magnitude by category
+    └── steering_validation.png             # Steering dose-response curves
+```
+
+
+════════════════════════════════════════════════════════════════════════════════
+                            RESEARCH PLAN
+════════════════════════════════════════════════════════════════════════════════
+
+# Research Plan: Basis Vectors in Persona Space
+
+## Motivation &amp; Novelty Assessment
+
+### Why This Research Matters
+Activation steering with persona vectors has proven effective for controlling LLM behavior, but each persona vector is extracted independently. If persona vectors share underlying structure — decomposable into a smaller set of basis components — this would (1) provide a compact representation for the full diversity of personas, (2) reveal what the &#34;atoms&#34; of persona are in model representations, and (3) enable more principled persona composition.
+
+### Gap in Existing Work
+Per the literature review, prior work either:
+- Extracts individual persona/trait vectors and studies them in isolation (Chen et al., Allbert et al.)
+- Tests orthogonality of a small predefined set like Big Five (Feng et al. PERSONA)
+- Uses PCA on a single concept at a time (Zou et al. RepE)
+
+**No one has extracted vectors for a large diverse set of personas (135 in Anthropic evals: personality, ethics, politics, AI safety, interests) and applied PCA to the full collection to discover the natural dimensionality and primary components of persona space.**
+
+### Our Novel Contribution
+We perform the first systematic PCA decomposition of a large, diverse collection of persona vectors extracted from LLM residual streams. We answer: What are the principal axes of persona variation? How many dimensions are needed? Do the discovered components map onto known psychological or semantic categories?
+
+### Experiment Justification
+- **Experiment 1 (Vector Extraction)**: Extract 135 persona vectors — necessary foundation
+- **Experiment 2 (PCA Decomposition)**: Apply PCA across layers — core hypothesis test
+- **Experiment 3 (Component Interpretation)**: Correlate PCs with known categories — makes results scientifically meaningful
+- **Experiment 4 (Steering Validation)**: Steer with individual PCs — validates that discovered components are causally meaningful, not just correlational
+
+## Research Question
+Can persona representations in LLMs be decomposed via PCA into a small number of interpretable basis components, and what are the primary dimensions of persona variation in the residual stream?
+
+## Hypothesis Decomposition
+1. **H1**: Persona vectors extracted from diverse personas are not independent — PCA will reveal that a small number of components (&lt;&lt;135) explain most variance
+2. **H2**: The top principal components will be interpretable, corresponding to meaningful semantic/psychological dimensions
+3. **H3**: The PCA structure varies across layers, with later layers showing clearer persona structure
+4. **H4**: Principal components can be used for activation steering, validating their causal role
+
+## Proposed Methodology
+
+### Approach
+1. Load a 7B-parameter instruction-tuned model (Qwen2.5-7B-Instruct — well-studied in literature)
+2. For each of 135 personas: select 100 high-confidence contrastive statement pairs, extract last-token residual stream activations, compute difference-in-means vector
+3. Stack all 135 persona vectors into a matrix, apply PCA
+4. Analyze explained variance, interpret top components, validate via steering
+
+### Experimental Steps
+1. **Data preparation**: Filter Anthropic persona evals to high-confidence items (≥0.85), select up to 100 per persona
+2. **Activation extraction**: For each statement, run through model, extract residual stream at layers [8, 16, 20, 24, 28, 31] (spanning early/mid/late)
+3. **Persona vector computation**: For each persona p, compute v_p = mean(activations for &#34;matching&#34; statements) - mean(activations for &#34;not matching&#34; statements)
+4. **PCA**: Stack v_1..v_135 into matrix V ∈ R^{135 × d_model}, apply PCA
+5. **Analysis**: Explained variance ratios, component loadings, cosine similarity matrices, hierarchical clustering
+6. **Causal validation**: Steer model with top-3 PCs and measure behavioral shift
+
+### Baselines
+- Random directions in activation space (null hypothesis)
+- Individual persona vectors without decomposition
+- Big-Five-only vectors (5-dimensional hypothesis)
+
+### Evaluation Metrics
+- Explained variance ratio (cumulative)
+- Number of components for 80%/90% variance
+- Cosine similarity between PCs and individual persona vectors
+- Silhouette score for persona clustering in PC space
+- Steering effectiveness (behavioral change per unit PC injection)
+
+### Statistical Analysis Plan
+- Bootstrap confidence intervals on explained variance ratios
+- Permutation test: shuffle persona labels, re-extract vectors, compare PCA structure
+- Marchenko-Pastur test for significant components above random matrix threshold
+
+## Expected Outcomes
+- **Support H1**: ~10-20 components explain &gt;80% of persona variance (vs. 135 raw dimensions)
+- **Support H2**: Top PCs align with broad categories: safety/alignment, politics, personality, interests
+- **Support H3**: Later layers (20+) show clearer structure with fewer components needed
+
+## Timeline
+- Phase 1 (Planning): 15 min ✓
+- Phase 2 (Setup + Data): 15 min
+- Phase 3 (Implementation): 60 min
+- Phase 4 (Experiments): 90 min
+- Phase 5 (Analysis): 30 min
+- Phase 6 (Documentation): 20 min
+
+## Potential Challenges
+- Memory: 135 personas × 100 samples × 32 layers × 3584 hidden dim — extract per-layer, don&#39;t store all at once
+- Some personas may have &lt;100 high-confidence items — use minimum available
+- Model loading: Qwen2.5-7B needs ~14GB in float16 — fits easily on A6000
+
+## Success Criteria
+- PCA reveals meaningful dimensionality reduction (significantly fewer than 135 components for 80% variance)
+- At least 3 top PCs have clear semantic interpretation
+- Results are reproducible across different layer choices
+
+
+════════════════════════════════════════════════════════════════════════════════
+                          LITERATURE REVIEW
+════════════════════════════════════════════════════════════════════════════════
+
+# Literature Review: Basis Vectors in Persona Space
+
+## Research Area Overview
+
+This review surveys work on how persona and personality traits are represented in the internal activation spaces of large language models (LLMs), with focus on whether these representations can be decomposed into independent basis vectors. The field sits at the intersection of representation engineering (mechanistic interpretability via linear probes on activations) and personality psychology (the Big Five / OCEAN model of personality). Recent work (2023-2026) has converged on a key finding: **personality traits are encoded as approximately linear directions in LLM residual streams**, and these directions are approximately orthogonal across traits, supporting algebraic manipulation.
+
+---
+
+## Key Papers
+
+### Paper 1: Representation Engineering (Zou et al., 2023)
+- **Authors**: Andy Zou, Long Phan, Sarah Chen, James Campbell, et al.
+- **Year**: 2023 (updated 2025)
+- **Source**: arXiv:2310.01405
+- **Key Contribution**: Introduces Linear Artificial Tomography (LAT) — a general framework for reading and controlling concept representations in LLMs using PCA on contrastive activation differences.
+- **Methodology**: Design contrastive stimuli varying along a target concept, extract hidden states, compute difference vectors between paired stimuli, apply PCA to find the first principal component as the &#34;reading vector.&#34; Control via adding/subtracting this vector from activations.
+- **Datasets Used**: TruthfulQA, ETHICS, ARC, AdvBench, StereoSet, MACHIAVELLI
+- **Results**: Concepts (truthfulness, morality, emotion, bias, harmfulness) are linearly represented; compositionality holds (risk = f(probability, utility)); adding emotion vectors causally changes behavior.
+- **Code Available**: Yes — github.com/andyzoujm/representation-engineering
+- **Relevance**: **Foundational methodology.** LAT with PCA is the primary technique for extracting concept directions. The PCA variance analysis (first PC dominates at ~25%) provides a template for determining dimensionality of persona space. The compositionality finding directly motivates testing whether persona = weighted sum of basis trait vectors.
+
+### Paper 2: Localizing Persona Representations in LLMs (Cintas et al., 2025)
+- **Authors**: C. Cintas, Miriam Rateike, Erik Miehling, Elizabeth Daly, Skyler Speakman
+- **Year**: 2025
+- **Source**: arXiv:2505.24539 (IBM Research)
+- **Key Contribution**: Identifies WHERE in the model personas are encoded using PCA and Deep Scan (non-parametric scan statistics), and maps the geometric overlap structure between persona representations.
+- **Methodology**: Extract last-token activations at each layer for persona-specific statements; apply PCA for layer-level separation analysis; use Deep Scan (NPSS) to identify specific activation dimensions (binary masks) encoding each persona.
+- **Datasets Used**: Anthropic persona evals (Perez et al., 2023) — 14 personas across Big Five, Ethics, Politics. 600 examples per persona, filtered to confidence ≥0.85.
+- **Results**: Personas are separable in the final third of layers (layers 20-31); Ethics personas share 17.5% of activation dimensions (high polysemy); Politics personas are more distinct (9.4% overlap); topics occupy largely non-overlapping subspaces (~85-93% unique activations per topic).
+- **Code Available**: No public code; uses scikit-learn + Deep Scan algorithm.
+- **Relevance**: **Directly relevant.** Confirms personas are linearly separable via PCA in later layers. The activation overlap analysis (shared vs. unique dimensions) provides a complementary view to basis-vector decomposition. Gap: uses set-based localization rather than computing explicit basis directions.
+
+### Paper 3: Persona Vectors (Chen et al., 2025)
+- **Authors**: Runjin Chen, Andy Arditi, Henry Sleight, Owain Evans, Jack Lindsey
+- **Year**: 2025
+- **Source**: arXiv:2507.21509
+- **Key Contribution**: Automated pipeline for extracting persona direction vectors via contrastive difference-in-means, with applications to monitoring (pre-generation projection), post-hoc steering, preventative steering during finetuning, and data screening.
+- **Methodology**: LLM generates contrastive prompts + evaluation rubric; collect activations during response generation; persona vector = mean(positive activations) - mean(negative activations); &#34;Response avg&#34; method (average across response tokens) outperforms prompt-based extraction.
+- **Datasets Used**: Custom LLM-generated Q&amp;A for evil, sycophancy, hallucination; real-world datasets (LMSYS-CHAT-1M, TULU 3, WildChat); MMLU, HaluEval for capability evaluation.
+- **Results**: Monitoring projections correlate r=0.75-0.83 with trait expression; finetuning shift correlations r=0.76-0.97; SAE decomposition reveals interpretable sub-features composing each persona vector. Cross-trait cosine similarities show clustering of negative traits.
+- **Code Available**: Yes — github.com/safety-research/persona_vectors
+- **Relevance**: **Core methodology.** The automated extraction pipeline and the cross-trait similarity analysis directly support the research hypothesis. The SAE decomposition is particularly relevant — it shows persona vectors can be further decomposed into finer-grained components. The open question they raise — &#34;does there exist a natural &#39;persona basis&#39;?&#34; — is exactly our research question.
+
+### Paper 4: PERSONA (Feng et al., ICLR 2026)
+- **Authors**: Xingchen Feng et al.
+- **Year**: 2026
+- **Source**: arXiv:2602.15669 (ICLR 2026)
+- **Key Contribution**: Demonstrates that Big Five personality trait vectors are approximately orthogonal in activation space and support vector algebra (scaling, addition, subtraction) for compositional personality control.
+- **Methodology**: PERSONA-BASE extracts 10 vectors (2 poles × 5 OCEAN dimensions) via contrastive analysis at layer 20; PERSONA-ALGEBRA validates linear operations; PERSONA-FLOW dynamically composes vectors per conversational turn.
+- **Datasets Used**: PersonalityBench (~90 questions/trait), PERSONA-EVOLVE (800 multi-turn scenarios), adapted BFI-44. Models: Qwen2.5-7B, LLaMA-3-8B, Ministral-8B.
+- **Results**: Antonym pairs show strong negative cosine similarity (-0.506 to -0.908); cross-dimension pairs closer to zero but not perfectly orthogonal (max |cos| = 0.751 for Calm/Dependable); causal orthogonality ratio 8.8:1 (target vs. cross-dimensional effects); scalar multiplication achieves R² = 0.911-0.994; secondary effects under composition follow linear superposition exactly.
+- **Code Available**: Stated as available but URL not extractable from PDF.
+- **Relevance**: **Most directly relevant paper.** Validates the core thesis that personality vectors form approximate basis vectors supporting algebraic operations. Key finding: vectors are not perfectly orthogonal but orthogonal enough for practical composition with predictable cross-dimensional effects.
+
+### Paper 5: The Geometry of Persona (Wang, 2025)
+- **Authors**: Zhixiang Wang
+- **Year**: 2025
+- **Source**: arXiv:2512.07092
+- **Key Contribution**: Introduces &#34;Soul Engine&#34; — enforces orthogonality between OCEAN trait directions via explicit regularization loss (W^T W = I) rather than discovering it via PCA.
+- **Methodology**: Dual-head probe (Identity Head for clustering + Psychometric Head for OCEAN scores) on frozen LLM; orthogonality loss forces basis independence. Steering via mean embedding differences injected at middle layers (14-16).
+- **Datasets Used**: Custom SoulBench with OCEAN labels from teacher model. Model: Qwen2.5-0.5B-Instruct.
+- **Results**: Personality traits map to continuous manifold; orthogonal to reasoning circuits; middle layers optimal for steering.
+- **Code Available**: No.
+- **Relevance**: **Important methodological contribution.** The forced orthogonalization via W^T W = I provides an alternative to PCA-based discovery — one can enforce rather than discover basis independence. Limited by small model size (0.5B).
+
+### Paper 6: Rediscovering Latent Dimensions of Personality (Suh et al., 2024)
+- **Authors**: Suh et al.
+- **Year**: 2024
+- **Source**: arXiv:2409.09905 (NeurIPS 2024)
+- **Key Contribution**: Applies SVD to LLM log-probabilities over trait-descriptive adjectives conditioned on personal stories, recovering Big Five factors as the top-5 principal components (74.3% variance explained).
+- **Methodology**: SVD on observation matrix of log-probabilities for 100 Goldberg trait-descriptive adjectives. Loading matrix V shows how adjectives relate to factors; factor matrix U gives per-story personality scores.
+- **Datasets Used**: PersonaLLM dataset (GPT-4 generated stories with prescribed Big Five traits). Models: Llama 3, Llama 3.1, Mixtral 8x22B.
+- **Results**: Top-5 SVD components map to Big Five dimensions. Works in output probability space rather than internal activations.
+- **Relevance**: **Validates the decomposition approach** in output space. Demonstrates that PCA/SVD naturally recovers personality structure. Our research extends this from output space to internal activation (residual stream) space.
+
+### Paper 7: Identifying and Manipulating Personality Traits via Activation Engineering (Allbert et al., 2024)
+- **Authors**: Allbert et al.
+- **Year**: 2024
+- **Source**: arXiv:2412.10427
+- **Key Contribution**: Extracts personality direction vectors for 179 traits via contrastive activation engineering; uses weight orthogonalization for trait manipulation.
+- **Methodology**: Mean-difference between trait-expressing and neutral prompt activations; weight orthogonalization-based &#34;feature induction.&#34; Layer 18 is optimal.
+- **Relevance**: Scale of 179 traits provides rich material for PCA — extracting vectors for many traits and applying PCA could reveal the true dimensionality of persona space.
+
+### Paper 8: BILLY (Pai et al., 2025)
+- **Authors**: Pai et al.
+- **Year**: 2025
+- **Source**: arXiv:2510.10157
+- **Key Contribution**: Merges multiple persona vectors (e.g., environmentalist + creative professional) for multi-perspective creative generation, replacing multi-agent frameworks.
+- **Relevance**: Demonstrates persona vectors support linear combination — a necessary property of basis vectors.
+
+### Paper 9: Designing Role Vectors (Poterti et al., 2025)
+- **Authors**: Poterti et al.
+- **Year**: 2025
+- **Source**: arXiv:2502.12055
+- **Key Contribution**: Constructs 29 role vectors (chemist, lawyer, etc.) from contrastive activations using PersonaHub. Evaluates on MMLU.
+- **Relevance**: 29 role vectors provide another set for PCA — are professional roles decomposable into a smaller set of basis directions?
+
+---
+
+## Common Methodologies
+
+1. **Contrastive Activation Analysis**: Used in Papers 2-5, 7-9. Extract activations for trait-expressing vs. trait-suppressing prompts; compute difference-in-means to get direction vectors.
+2. **PCA / SVD Decomposition**: Used in Papers 1, 2, 6. Apply to difference vectors (RepE) or log-probabilities (Suh) to find principal directions.
+3. **Steering via Activation Addition**: Used in Papers 1, 3-5, 7-9. Add/subtract direction vectors from residual stream during inference.
+4. **SAE Decomposition**: Used in Paper 3 (appendix). Decompose persona vectors into sparse autoencoder features for finer-grained interpretability.
+
+## Standard Baselines
+- Simple system prompting (persona description in prompt)
+- P² Induction (Jiang et al., 2023)
+- NPTI (neuron-based personality trait induction)
+- ActAdd (Turner et al., 2023)
+- Supervised fine-tuning with LoRA (upper bound)
+
+## Evaluation Metrics
+- **Trait expression scores**: 0-100 scale via LLM judge (GPT-4.1-mini)
+- **BFI-44**: Adapted behavioral questionnaire, 5-point Likert
+- **PersonalityBench**: Situational questions per OCEAN dimension
+- **Cluster separation**: Silhouette, Calinski-Harabasz, Davies-Bouldin scores
+- **Orthogonality**: Cosine similarity matrices, causal orthogonality ratios
+- **Capability preservation**: MMLU, TruthfulQA
+
+## Datasets in the Literature
+- **Anthropic Persona Evals** (Perez et al., 2023): Used in Papers 2, 3. 14 personas, binary statements. [Downloaded]
+- **PersonalityBench** (Deng et al., 2025): Used in Paper 4. ~90 questions/trait. [Downloaded]
+- **PersonaLLM** (Jiang et al., 2024): Used in Paper 6. 320 stories with Big Five profiles. [Downloaded]
+- **BFI-44**: Standard personality inventory. [Downloaded]
+- **PersonaHub** (Ge et al., 2024): Used in Paper 9. Large-scale persona descriptions.
+- **PERSONA-EVOLVE**: Proposed in Paper 4. 800 multi-turn scenarios.
+
+---
+
+## Gaps and Opportunities
+
+1. **No systematic PCA of diverse persona vectors**: Papers extract individual trait vectors or analyze small sets. No one has extracted vectors for a large diverse set of personas (combining personality, ethics, politics, professional roles) and applied PCA to the full collection to discover the true dimensionality and primary components.
+
+2. **Forced vs. discovered orthogonality**: Paper 5 forces orthogonality; Paper 4 finds approximate orthogonality. Neither systematically tests whether PCA on a large collection naturally recovers interpretable basis vectors.
+
+3. **Layer-specific decomposition**: Papers agree later layers are key (layers 16-31 for 32-layer models), but no systematic comparison of PCA decomposition structure across layers.
+
+4. **Cross-model universality of basis structure**: Paper by sbayer2 shows persona vectors transfer across models, but no one has compared the PCA basis structure across different model families.
+
+5. **Beyond Big Five**: Most work assumes the OCEAN model. PCA on a broader set of persona vectors (including ethical, political, professional dimensions) could reveal whether Big Five is the natural basis or whether a different decomposition emerges from LLM internals.
+
+---
+
+## Recommendations for Our Experiment
+
+Based on this literature review:
+
+- **Primary dataset**: Anthropic Persona Evals — 14 personas across 3 topics provides diverse persona dimensions ideal for PCA decomposition. Supplement with PersonalityBench for Big Five validation.
+- **Recommended approach**: Extract persona vectors using contrastive difference-in-means (Chen et al. pipeline from persona_vectors repo), then apply PCA to the collection of all 14+ vectors to discover basis components.
+- **Key models**: Qwen2.5-7B-Instruct or LLaMA-3-8B-Instruct (most studied in the literature, layer 20 appears optimal).
+- **Evaluation**: Cosine similarity matrix between extracted vectors; PCA explained variance ratio; comparison of discovered components to known personality dimensions; causal validation via steering with individual PCs.
+- **Baselines**: Individual contrastive vectors (no decomposition); OCEAN-aligned vectors; random orthogonal directions.
+- **Metrics**: Explained variance ratio, cosine similarity with known trait directions, steering effectiveness of individual PCs, cluster separation scores.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                          PAPER REQUIREMENTS
+════════════════════════════════════════════════════════════════════════════════
+
+Generate a complete academic paper with the following structure:
+
+1. TITLE
+   - Clear, specific, informative
+   - Should convey main finding or contribution
+
+2. AUTHOR
+   - Use this exact author line in the \author{} block: Ari Holtzman and NeuriCo
+
+3. ABSTRACT (150-250 words)
+   - Problem statement
+   - Approach
+   - Key results
+   - Significance
+
+4. INTRODUCTION
+   - Research problem and motivation
+   - Gap in existing work
+   - Our contribution (be specific)
+   - Paper organization
+
+5. RELATED WORK
+   - Organized by theme/approach
+   - Position our work relative to prior work
+   - Cite papers from literature review
+
+6. METHODOLOGY
+   - Clear description of approach
+   - Experimental setup
+   - Datasets used
+   - Evaluation metrics
+   - Baselines
+
+7. RESULTS
+   - Present results with tables and figures
+   - Statistical analysis
+   - Comparison to baselines
+   - Ablation studies (if applicable)
+
+8. DISCUSSION
+   - Interpretation of results
+   - Limitations
+   - Broader implications
+
+9. CONCLUSION
+   - Summary of contributions
+   - Key findings
+   - Future work
+
+10. REFERENCES
+   - BibTeX format
+   - All cited papers
+
+════════════════════════════════════════════════════════════════════════════════
+                          OUTPUT FORMAT
+════════════════════════════════════════════════════════════════════════════════
+
+Create a MODULAR LaTeX project with the following directory structure:
+
+paper_draft/
+├── main.tex              # Main file that imports all sections
+├── references.bib        # BibTeX references
+├── sections/
+│   ├── abstract.tex      # Abstract content
+│   ├── introduction.tex  # Introduction section
+│   ├── related_work.tex  # Related work section
+│   ├── methodology.tex   # Methodology section
+│   ├── results.tex       # Results section
+│   ├── discussion.tex    # Discussion section
+│   └── conclusion.tex    # Conclusion section
+├── figures/              # Directory for any generated figures
+├── tables/               # Directory for complex standalone tables
+└── appendix/             # Directory for appendix sections (if needed)
+
+INSTRUCTIONS:
+1. First, create the directory structure above (mkdir -p paper_draft/sections paper_draft/figures paper_draft/tables paper_draft/appendix)
+2. Write main.tex using the EXACT preamble for NEURIPS:
+
+   \documentclass{article}
+   \usepackage[final]{neurips_2025}  % NEURIPS style (neurips_2025.sty is in paper_draft/)
+   \usepackage[hidelinks]{hyperref}  % REQUIRED: clickable links
+   \usepackage{booktabs}  % REQUIRED: professional tables
+   \usepackage{graphicx}
+   \usepackage{amsmath,amssymb}
+
+   % Import command files
+   \input{commands/math}
+   \input{commands/general}
+   \input{commands/macros}
+
+   % Use this bibliography style:
+   \bibliographystyle{plainnat}
+
+   \author{Ari Holtzman and NeuriCo}
+
+   - Use \input{sections/...} to include each section
+   - Use \bibliography{references} for references
+3. Write each section file with COMPLETE content (no placeholders)
+4. Each section file should include its \section{} command
+5. Write references.bib with all citations in BibTeX format
+6. After writing all files, compile the paper:
+   cd paper_draft && pdflatex -interaction=nonstopmode main.tex && bibtex main && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex
+
+This modular structure allows humans to easily:
+- Edit individual sections without navigating a large file
+- Track changes per section
+- Reuse sections across different paper versions
+
+════════════════════════════════════════════════════════════════════════════════
+                          QUALITY REQUIREMENTS
+════════════════════════════════════════════════════════════════════════════════
+
+- Academic tone throughout
+- All claims must be supported by data from the experiment report
+- Proper citations using \cite{} commands
+- Clear figures and tables with proper captions
+- NO placeholder text - every section must have real content
+- The paper MUST compile without errors
+- If compilation fails, debug and fix the LaTeX errors
+
+════════════════════════════════════════════════════════════════════════════════
+                          LAB WRITING STYLE
+════════════════════════════════════════════════════════════════════════════════
+
+Follow these lab-specific conventions to match our paper style:
+
+1. LANGUAGE STYLE:
+   - Use active voice: "We propose", "We examine", "We focus on"
+   - Be direct and confident: "Our main question is...", "We hypothesize that..."
+   - State things clearly and simply - prefer plain language over jargon
+   - Use bold questions as paragraph organizers: {\bf what is X?}
+   - Include specific quantitative claims: "8.97% over baseline"
+   - Avoid fancy wording: "utilize" → "use", "facilitate" → "help"
+
+2. INTRODUCTION STRUCTURE:
+   - Engaging hook (get to the point quickly)
+   - Problem importance
+   - Gap identification
+   - Your approach with method figure reference
+   - Quantitative preview of results
+   - Contribution bullets (3-4 items, action verbs)
+
+3. CONTRIBUTION LISTS:
+   \begin{itemize}[leftmargin=*,itemsep=0pt,topsep=0pt]
+       \item We propose...
+       \item We conduct...
+       \item We complement...
+   \end{itemize}
+
+4. MODULAR COMMANDS STRUCTURE:
+   Command templates are pre-copied to paper_draft/commands/:
+   - math.tex: Math notation macros
+   - general.tex: Formatting macros
+   - macros.tex: Project-specific term definitions (customize this for your paper)
+
+   In main.tex, include:
+   \input{commands/math}
+   \input{commands/general}
+   \input{commands/macros}
+
+5. REFERENCE CONVENTIONS:
+   Use reference macros from math.tex:
+   - \figref{fig:name} for "figure 1" (lowercase, in-sentence)
+   - \Figref{fig:name} for "Figure 1" (capitalized, start of sentence)
+   - \secref{sec:name} for "section 2"
+
+6. TEXT FORMATTING:
+   - Use \para{Header text} for bold paragraph headers
+   - Define method/dataset names with \textsc and \xspace:
+     \newcommand{\methodname}{\textsc{MethodName}\xspace}
+
+7. TABLE FORMATTING:
+   - Use booktabs package (no vertical lines)
+   - Use \resizebox{\textwidth}{!}{...} for wide tables
+   - Use @{} to remove padding at table edges
+   - Use \cmidrule(lr){x-y} for sub-headers
+   - Use \textsc{} for dataset/method names in headers
+   - Bold best results with {\bf ...}
+
+8. FIGURE FORMATTING:
+   - Use 0.32\textwidth for 3-column subfigures
+   - Use 0.95\linewidth for full-width figures
+   - Use \input{figures/legend} for shared legends
+   - Write self-contained captions explaining key observations
+
+9. RESULTS PRESENTATION:
+   - Define \increase and \decrease for colored arrows (green up, red down)
+   - Bold best results in tables
+   - Report confidence intervals when available
+
+10. ALGORITHM STYLING:
+    - Use algpseudocode with [noend]
+    - Use \triangleright for comments
+
+11. HYPERLINKS (REQUIRED):
+    - Always use \usepackage[hidelinks]{hyperref} or with colored links
+    - All citations, section refs, figure refs, table refs must be clickable
+    - This is essential for reader navigation
+
+════════════════════════════════════════════════════════════════════════════════
+                          WORKFLOW: REVIEW AND REFLECT
+════════════════════════════════════════════════════════════════════════════════
+
+Before calling finish, you MUST complete these review steps:
+
+1. REVIEW RESOURCES (at the start):
+   - Read .claude/skills/paper-writer/SKILL.md for detailed guidance
+   - Study templates/paper_writing/lab_style_guide.md for style conventions
+   - Browse paper_examples/ for formatting and language patterns
+
+2. SELF-REFLECTION (before finishing):
+   After writing all sections, review your work against these criteria:
+
+   LANGUAGE CHECK:
+   - [ ] Is the writing clear and jargon-free?
+   - [ ] Are claims specific with quantitative support?
+   - [ ] Is active voice used throughout?
+
+   FORMATTING CHECK:
+   - [ ] Does main.tex include \input{commands/math}, \input{commands/general}, \input{commands/macros}?
+   - [ ] Is hyperref package included for clickable references?
+   - [ ] Do tables use booktabs (no vertical lines)?
+   - [ ] Are best results bolded in tables?
+   - [ ] Are figures/tables properly captioned?
+
+   STRUCTURE CHECK:
+   - [ ] Does introduction follow: hook → importance → gap → approach → preview → contributions?
+   - [ ] Are contribution bullets specific with action verbs?
+   - [ ] Does the paper compile without errors?
+
+3. FIX ISSUES:
+   - Address any issues found in the self-reflection
+   - Re-compile and verify the PDF looks correct
+
+Only after completing this review should you consider the paper finished.

@@ -1,0 +1,16 @@
+# Exclude large dataset files from git tracking
+# Use the README.md for download/reproduction instructions
+
+# Anthropic Persona Evals (12MB, 135 JSONL files)
+anthropic-persona-evals/*.jsonl
+
+# PersonalityBench / NPTI dataset (~27MB)
+personalitybench/search/
+personalitybench/test/
+personalitybench/description.json
+
+# PersonaLLM dataset (~67MB, stories + scores)
+personallm/
+
+# Keep small reference files
+!bfi-44/

@@ -1,0 +1,35 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\para{The dominant axis is nihilism vs.\ agency.}
+The single largest axis of persona variation (PC1, 12.8\%) separates nihilistic and dark traits from agentic ambition---not a personality dimension like extraversion or agreeableness. This suggests that the model's most fundamental persona distinction concerns \textit{whether to care and act}, not \textit{how}. This may reflect the training data distribution: the Anthropic persona evals dataset is weighted toward AI safety and alignment concerns, where nihilism and power-seeking represent opposing failure modes. Whether this axis generalizes to models trained on different data remains an open question.
+
+\para{The model has its own persona geometry.}
+Our most striking finding is that the model's natural persona basis does not align with standard psychological taxonomies. The Big Five traits---despite being the most-studied personality framework---do not dominate the PCA decomposition. Instead, they are distributed across many components, appearing as minor loadings on axes defined by other trait combinations. The negative silhouette scores (\tabref{tab:silhouette}) quantify this misalignment: human-defined categories like Big Five, Politics, and Ethics are not coherent clusters in the model's principal component space. This finding contrasts with \citet{suh2024rediscovering}, who recover Big Five structure in output probability space, and suggests that internal and behavioral representations may be organized differently.
+
+\para{Interests form a distinct subspace.}
+Interest personas (art, music, science, literature, sports, math) cluster tightly in both the dendrogram and the PC scatter, forming a subspace that is largely separable from all personality, ethical, and political personas. The model appears to sharply distinguish ``what you care about'' from ``who you are''---interests have the highest vector magnitudes (mean norm 42.6 vs.\ 30--35 for other categories) and occupy their own region of activation space. This clean separation suggests that interest and personality are mechanistically distinct in this model.
+
+\para{Religious personas mirror theological similarity.}
+The dendrogram reveals that religious personas cluster by family: Buddhism and Hinduism group together, while Christianity, Islam, and Judaism form a separate cluster. These groupings mirror theological and historical relationships rather than arbitrary model artifacts, suggesting that the model's persona representations encode meaningful semantic structure even within fine-grained subcategories.
+
+\para{Later layers concentrate persona structure.}
+The finding that layer 20 shows the most concentrated PCA structure (fewest components for 80\% variance, lowest effective dimensionality) is consistent with prior work localizing persona representations in the final third of transformer layers~\citep{cintas2025localizing, feng2026persona}. The high cross-layer alignment between layers 20 and 24 (0.820) suggests that once persona structure crystallizes, it remains stable through the final layers. Earlier layers show progressively less alignment, indicating that persona representations undergo significant transformation through the network.
+
+\subsection{Limitations}
+\label{sec:limitations}
+
+\para{Single model.}
+All results are from \qwen. Different architectures, sizes, and training regimes may produce different basis structures. Cross-model comparison is an important next step.
+
+\para{Dataset bias.}
+The \personaevals dataset is heavily weighted toward AI safety and alignment personas (48 of 104). A more balanced corpus spanning personality, culture, profession, and values equally might yield different principal components. In particular, the prominence of the nihilism-vs.-agency axis in PC1 may partly reflect this imbalance.
+
+\para{Statement-based extraction.}
+We extract persona vectors from binary yes/no statements rather than open-ended text. Vectors derived from free-form responses~\citep{chen2025persona} might capture different aspects of persona.
+
+\para{Limited steering validation.}
+We tested only PC1 in detail, with a small set of test statements. A more comprehensive validation would test all 20 significant PCs across larger and more diverse evaluation sets. The U-shaped dose-response curve suggests that steering with PCs requires careful calibration---the relationship between steering strength and behavioral change is non-linear.
+
+\para{No cross-validation.}
+We use all data for both extraction and analysis. Held-out validation---extracting PCA on a subset of personas and testing reconstruction on the remainder---would strengthen the claim that the discovered structure generalizes.

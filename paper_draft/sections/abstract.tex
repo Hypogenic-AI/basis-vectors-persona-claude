@@ -1,0 +1,8 @@
+Activation steering with persona vectors has proven effective for controlling language model behavior, yet each vector is typically extracted independently, leaving open whether personas share underlying structure.
+We perform the first systematic PCA decomposition of a large, diverse collection of persona vectors extracted from an LLM's residual stream.
+Using \npersonas persona directions from the \personaevals dataset---spanning personality traits, political views, ethical frameworks, religious beliefs, AI safety dispositions, and interests---extracted from \qwen, we find that persona space has an effective dimensionality of \effdim, with 20 principal components capturing 63\% of variance and 39 components needed for 80\%.
+All 20 top components are statistically significant by permutation testing ($p < 0.05$).
+The principal components reveal interpretable structure: PC1 separates nihilistic and dark-triad traits from agentic-ambition traits, while later components capture cultural interests, political orientation, ethical frameworks, and religious identity.
+Critically, the model's natural persona basis does not align with standard psychological taxonomies such as the Big Five---the geometry is organized along dimensions that cross-cut human-defined categories.
+Causal validation via activation steering confirms that injecting PC1 shifts model behavior on nihilism-related statements from 10\% to 40\% agreement.
+These findings suggest that practitioners could work with a compact ${\sim}20$-dimensional basis rather than hundreds of individual persona vectors, enabling principled persona composition via linear combination.

@@ -1,0 +1,8 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have presented the first systematic PCA decomposition of a large, diverse collection of persona vectors extracted from LLM residual streams. Across \npersonas personas spanning personality traits, political views, ethical frameworks, religious beliefs, and interests, we find that persona space in \qwen has an effective dimensionality of \effdim---far less than the number of individual persona vectors. The top 20 principal components are statistically significant, interpretable, and partially causally active, but they do not align with standard psychological taxonomies. The model has its own natural basis for persona, organized around axes like nihilism-vs.-agency and antisocial-vs.-intellectual that cross-cut human-defined categories.
+
+These findings have practical implications: rather than extracting individual persona vectors, practitioners could work with a compact ${\sim}20$-dimensional basis and compose arbitrary personas via linear combination of basis components. For interpretability research, the discovery that PC1 separates nihilism and dark traits from agency suggests a fundamental organizational principle in how this model represents persona---one that may reflect training data priorities rather than human psychological structure.
+
+Important directions for future work include cross-model comparison (testing whether the same basis structure appears in Llama, Mistral, and other architectures), more comprehensive causal validation of all significant PCs, alternative decompositions such as ICA or sparse autoencoders that may yield more interpretable components, and construction of balanced persona corpora that do not over-represent any single category.

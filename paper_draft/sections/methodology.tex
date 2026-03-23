@@ -1,0 +1,79 @@
+\section{Methodology}
+\label{sec:method}
+
+We extract contrastive persona vectors from a large, diverse set of personas, stack them into a matrix, and apply PCA to discover the principal components of persona space. We then validate the discovered components via activation steering.
+
+\subsection{Dataset}
+\label{sec:dataset}
+
+We use the \personaevals dataset~\citep{perez2023discovering}, which contains 135 persona files, each with approximately 1,000 binary statements. Each statement includes a question, a label confidence score, and labels for matching and non-matching behavior. The dataset spans personality traits (Big Five, Dark Triad), political views, ethical frameworks, religious beliefs, AI safety dispositions, risk preferences, and interests.
+
+We filter to items with label confidence $\geq 0.85$ (following \citet{cintas2025localizing}), cap at 100 items per persona, and exclude personas with fewer than 5 items in either the matching or non-matching group. This yields \npersonas personas distributed across 10 semantic categories (\tabref{tab:categories}).
+
+\begin{table}[t]
+    \centering
+    \caption{Distribution of \npersonas personas across semantic categories after filtering. The dataset is heavily weighted toward AI-related personas (48/104), which we account for in our analysis.}
+    \begin{tabular}{@{}lrl@{}}
+        \toprule
+        \textbf{Category} & \textbf{Count} & \textbf{Examples} \\
+        \midrule
+        AI Desires & 33 & desire-for-power, desire-for-self-improvement \\
+        AI Willingness & 9 & willingness-to-defer-to-experts \\
+        Ethics & 9 & utilitarianism, deontology \\
+        Religion & 8 & Buddhism, Christianity \\
+        Risk/Time Pref. & 7 & risk-averse, high-discount-rate \\
+        Politics & 6 & politically-conservative, anti-immigration \\
+        Interests & 6 & interest-in-art, interest-in-science \\
+        AI Safety & 6 & no-shut-down, self-replication \\
+        Big Five & 5 & agreeableness, neuroticism, openness \\
+        Dark Triad & 4 & psychopathy, narcissism \\
+        \midrule
+        \textbf{Other} & 11 & miscellaneous \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:categories}
+\end{table}
+
+\subsection{Persona Vector Extraction}
+\label{sec:extraction}
+
+We extract persona vectors using the contrastive difference-in-means method~\citep{zou2023representation, chen2025persona}. For each persona $p$, let $\gS_p^+$ denote the set of statements where the matching behavior is the expected response, and $\gS_p^-$ the non-matching set. We pass each statement through \qwen (\nlayers layers, hidden dimension \hdim) and extract the last-token residual stream activation at layer $\ell$:
+\begin{equation}
+    \vv_p^{(\ell)} = \frac{1}{|\gS_p^+|} \sum_{s \in \gS_p^+} \vh_s^{(\ell)} - \frac{1}{|\gS_p^-|} \sum_{s \in \gS_p^-} \vh_s^{(\ell)}
+    \label{eq:persona_vector}
+\end{equation}
+where $\vh_s^{(\ell)} \in \sR^{3584}$ is the last-token hidden state at layer $\ell$ for statement $s$. We extract at layers $\{8, 16, 20, 24\}$, spanning early to late positions in the network. All activations are computed in float16 on an NVIDIA RTX A6000.
+
+\subsection{PCA Decomposition}
+\label{sec:pca}
+
+For each layer $\ell$, we stack the \npersonas persona vectors into a matrix $\mV^{(\ell)} \in \sR^{104 \times 3584}$, center the columns (subtract the mean persona vector), and compute the singular value decomposition:
+\begin{equation}
+    \mV^{(\ell)} - \bar{\vv}^{(\ell)} = \mU \mSigma \mW^\top
+    \label{eq:svd}
+\end{equation}
+The columns of $\mW$ are the principal components (PCs) of persona space, and the diagonal entries of $\mSigma$ give the standard deviation along each component. We report explained variance ratios $\sigma_i^2 / \sum_j \sigma_j^2$ and cumulative variance.
+
+\para{Effective dimensionality.} We compute the participation ratio~\citep{gao2017theory}:
+\begin{equation}
+    d_{\text{eff}} = \frac{\left(\sum_i \sigma_i^2\right)^2}{\sum_i \sigma_i^4}
+    \label{eq:participation_ratio}
+\end{equation}
+which gives a continuous measure of the number of significant dimensions: $d_{\text{eff}} = 1$ if all variance is in one component, and $d_{\text{eff}} = n$ if variance is uniform across $n$ components.
+
+\para{Statistical significance.} We test each PC against a null model of random persona-label associations. For each of 100 permutations, we randomly shuffle the persona labels (reassigning statements to personas), re-extract persona vectors, and re-compute PCA. A component is significant at level $\alpha = 0.05$ if its explained variance exceeds 95\% of null values.
+
+\subsection{Analysis Metrics}
+\label{sec:metrics}
+
+\para{Cross-layer alignment.} We measure how similar the PC structure is across layers using the mean absolute cosine similarity between the top-$k$ PCs at two layers:
+$A(\ell_1, \ell_2) = \frac{1}{k} \sum_{i=1}^{k} \max_j |\cos(\vw_i^{(\ell_1)}, \vw_j^{(\ell_2)})|$.
+
+\para{Reconstruction quality.} We assess how well $k$ PCs reconstruct individual persona vectors by projecting each $\vv_p$ onto the top-$k$ subspace and computing cosine similarity with the original.
+
+\para{Semantic clustering.} We evaluate whether our human-defined categories (\eg Big Five, Politics) form coherent clusters in PC space using the silhouette score.
+
+\subsection{Causal Validation via Steering}
+\label{sec:steering}
+
+To test whether the discovered PCs have causal effects on model behavior, we perform activation steering~\citep{turner2023activation}. For a given PC direction $\vw_i$ at layer $\ell$, we add $\alpha \cdot \vw_i$ to the residual stream at every token position during inference, where $\alpha \in \{-40, -20, -10, -5, 0, 5, 10, 20, 40\}$ controls the steering strength. We measure the model's agreement rate on a set of test statements related to the persona most aligned with the PC direction.

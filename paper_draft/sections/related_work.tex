@@ -1,0 +1,17 @@
+\section{Related Work}
+\label{sec:related}
+
+\para{Representation engineering.}
+\citet{zou2023representation} introduce Linear Artificial Tomography (LAT), which uses PCA on contrastive activation differences to extract concept directions for truthfulness, morality, and emotion. Their framework demonstrates that internal representations are linearly structured and can be both read and controlled. We build on this contrastive extraction methodology but apply PCA not to a single concept at a time, but jointly across a large collection of persona vectors to discover shared structure.
+
+\para{Persona and personality vectors.}
+Several recent works extract trait-specific direction vectors from LLM activations. \citet{chen2025persona} develop an automated pipeline for extracting persona vectors via difference-in-means, demonstrating monitoring and steering applications across evil, sycophancy, and hallucination traits. They decompose persona vectors using sparse autoencoders to reveal interpretable sub-features, and note cross-trait cosine similarities that suggest shared structure---but do not systematically decompose the joint space. \citet{allbert2024identifying} extract direction vectors for 179 personality traits and manipulate them via weight orthogonalization, providing a rich set of vectors but no joint dimensionality analysis. \citet{poterti2025designing} construct 29 professional role vectors from contrastive activations using PersonaHub. Unlike these works, we stack all persona vectors into a single matrix and decompose it via PCA to discover the natural basis.
+
+\para{Orthogonality and composition of trait vectors.}
+\citet{feng2026persona} demonstrate that Big Five personality trait vectors are approximately orthogonal in activation space and support vector algebra---scaling, addition, and subtraction---for compositional personality control. They report causal orthogonality ratios of 8.8:1 (target vs.\ cross-dimensional effects) and near-perfect linearity under scalar multiplication. \citet{wang2025geometry} takes a complementary approach, enforcing orthogonality between OCEAN directions via an explicit regularization loss. \citet{pai2025billy} merge multiple persona vectors for multi-perspective creative generation, validating that linear combination is practically useful. Our work differs in that we do not assume a predefined set of trait dimensions; instead, we let PCA discover what the natural axes are, and we test whether they align with the Big Five or other human taxonomies.
+
+\para{Dimensionality of personality in LLM outputs.}
+\citet{suh2024rediscovering} apply SVD to log-probabilities over trait-descriptive adjectives, recovering Big Five factors as the top five principal components with 74.3\% variance explained. Their work validates PCA-based discovery of personality structure, but operates in output probability space rather than internal activations. Our work extends this approach to the residual stream, asking whether the same or different structure emerges in the model's internal representations.
+
+\para{Localization of persona representations.}
+\citet{cintas2025localizing} identify where personas are encoded using PCA and non-parametric scan statistics, finding that personas are separable in the final third of layers and that different persona categories share varying degrees of activation overlap (17.5\% for ethics, 9.4\% for politics). Their per-persona analysis complements our joint decomposition, which asks not where individual personas live but what shared axes they span.
